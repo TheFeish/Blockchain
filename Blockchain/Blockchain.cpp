@@ -2,7 +2,9 @@
 #include <string>
 #include <Vector>
 #include <random>
+#include <Windows.h>
 #include "hashFunc.h"
+
 using std::string;
 using std::back_inserter;
 using std::sample;
@@ -107,7 +109,12 @@ class Block {
         void setTimestamp(unsigned int i) { _timestamp = i; }
         void setNonce(unsigned int i) { _nonce = i; }
 
+        string getPrevHash() { return _prevHash; }
         string getRootHash() { return _rootHash; }
+        unsigned int getTimestamp() { return _timestamp; }
+        unsigned int getVersion() { return _version; }
+        unsigned int getNonce() { return _nonce; }
+        unsigned int getDiffTarget() { return _diffTarget; }
         vector<Transaction> getTransactions() { return _transactions; }
 
         void print(bool printTransactions) {
@@ -120,7 +127,7 @@ class Block {
             if (printTransactions) {
                 cout << endl << "Transactions:" << endl;
                 for (Transaction t : _transactions) {
-                    t.print();
+                    cout << t.getId() << endl;
                 }
             }
             cout << endl;
@@ -160,6 +167,19 @@ bool isHashGood(string hash, int diff) {
     return str.find_first_not_of('0') == string::npos;
 }
 
+bool getNonceTimestamp(unsigned int& nonce, unsigned int& timestamp, string& hash, string prevHash, string rootHash, int diff, int version) {
+    while (!isHashGood(hash, diff)) {
+        nonce++;
+        timestamp = time(0);
+        hash = myHash(prevHash + rootHash + to_string(version) + to_string(diff) + to_string(nonce) + to_string(timestamp));
+        if (GetAsyncKeyState(VK_ESCAPE) & 0x8000) {
+            cout << endl << "Mining stopped" << endl << endl;
+            return false;
+        }
+    }
+    return true;
+}
+
 void processBlock(Block block, vector<User>& users) {
     for (Transaction t : block.getTransactions()) {
         int senderI = distance(users.begin(), find_if(users.begin(), users.end(), [&](User obj) {return obj.getPublicKey() == t.getSender(); }));
@@ -174,18 +194,18 @@ void mining(vector<Block>& blocks, vector<Transaction>& transactions, vector<Use
     default_random_engine rng{ (unsigned int)time(0) };
     unsigned int nonce = 0;
     while (transactions.size() > 0) {
+        bool halt = false;
         vector<Transaction> blockTransactions;
         size_t test = 100;
         sample(transactions.begin(), transactions.end(), back_inserter(blockTransactions), test, mt19937(rng));
         Block block(prevHash, version, diff, blockTransactions);
         string rootHash = block.getRootHash();
-        string hash = "11111111111111111111111111";
-        while (!isHashGood(hash, diff)) {
-            hash = myHash(rootHash + to_string(nonce));
-            nonce++;
-        }
+        string hash = "1111111111111111111111111111111111111111111111111111111111111111";
+        unsigned int timestamp = 0;
+        bool cont = getNonceTimestamp(nonce, timestamp, hash, prevHash, rootHash, diff, version);
+        if (cont == false) { return; }
         block.setNonce(nonce);
-        block.setTimestamp(time(0));
+        block.setTimestamp(timestamp);
         prevHash = hash;
         block.print(false);
         processBlock(block, users);
@@ -194,16 +214,94 @@ void mining(vector<Block>& blocks, vector<Transaction>& transactions, vector<Use
     }
 }
 
+void getBlock(vector<Block> blocks) {
+    string hash;
+    cout << "Enter block hash: ";
+    cin >> hash;
+    cout << endl;
+    int i = distance(blocks.begin(), find_if(blocks.begin(), blocks.end(),
+        [&](Block b) {return myHash(b.getPrevHash() + b.getRootHash() + to_string(b.getVersion()) + to_string(b.getDiffTarget()) + to_string(b.getNonce()) + to_string(b.getTimestamp())) == hash; }));
+    if (i == blocks.size()) {
+        cout << "Block not found" << endl;
+    }
+    else {
+        blocks[i].print(true);
+    }
+}
+
+void getTransaction(vector<Block> blocks) {
+    string id;
+    cout << "Enter transaction id: ";
+    cin >> id;
+    cout << endl;
+    for (auto b : blocks) {
+        vector<Transaction> t = b.getTransactions();
+        auto it = find_if(t.begin(), t.end(), [&](Transaction t) {return t.getId() == id; });
+        if (it != t.end()) {
+            t[distance(t.begin(), it)].print();
+            return;
+        }
+    }
+    cout << "Transaction not found" << endl;
+}
+
+void getUser(vector<User> users) {
+    string key;
+    cout << "Enter user public key: ";
+    cin >> key;
+    cout << endl;
+    int i = distance(users.begin(), find_if(users.begin(), users.end(),
+        [&](User u) {return u.getPublicKey() == key; }));
+    if (i == users.size()) {
+        cout << "User not found" << endl;
+    }
+    else {
+        users[i].print();
+    }
+}
+
+
 int main() {
     vector<User> users;
     vector<Transaction> transactions;
     vector<Block> blocks;
-    string prevHash = "0000922faa407970e4402aa57eabe2186a5c72b90b70ff4fe52f571e9d46b5f2";
-    unsigned int diff = 5, version = 1;
+    string prevHash = "1111111111111111111111111111111111111111111111111111111111111111";
+    unsigned int diff = 4, version = 1;
     generateUsers(users);
     generateTransactions(transactions, users);
-    blocks.push_back(Block("", version, diff, vector<Transaction>(), time(0), 74569));
+    blocks.push_back(Block("0000000000000000000000000000000000000000000000000000000000000000", version, diff, vector<Transaction>()));
+    unsigned int nonce = 0, timestamp = 0;
+    getNonceTimestamp(nonce, timestamp, prevHash, blocks[0].getPrevHash(), blocks[0].getRootHash(), diff, version);
+    blocks[0].setNonce(nonce);
+    blocks[0].setTimestamp(timestamp);
+    cout << "------------------------Genesis block------------------------" << endl;
     blocks[0].print(false);
+    cout << endl << "----------Begining mining. Press Escape key to stop----------" << endl << endl;
     mining(blocks, transactions, users, prevHash, version, diff);
+    int temp = 0;
+    while (temp != 4) {
+        cout << endl << "1 - find block\n2 - find transaction\n3 - find user\n4 - exit" << endl;
+        while (temp < 1 || temp > 4) {
+            cin >> temp;
+            if (temp < 1 || temp > 4 || cin.fail()) {
+                cout << "Ivedete neteisinga reiksme" << endl;
+                temp = 0;
+                cin.clear();
+                cin.ignore((numeric_limits<streamsize>::max)(), '\n');
+            }
+        }
+        switch (temp) {
+            case 1:
+                getBlock(blocks);
+                break;
+            case 2:
+                getTransaction(blocks);
+                break;
+            case 3:
+                getUser(users);
+                break;
+        }
+        if (temp != 4) { temp = 0; }
+    }
     return 0;
 }
