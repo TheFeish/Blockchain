@@ -190,17 +190,28 @@ bool isHashGood(string hash, int diff) {
     return str.find_first_not_of('0') == string::npos;
 }
 
-bool getNonceTimestamp(unsigned int& nonce, unsigned int& timestamp, string& hash, string prevHash, string rootHash, int diff, int version) {
-    while (!isHashGood(hash, diff)) {
+bool getNonceTimestamp(unsigned int& nonce, unsigned int& timestamp, string& hash, string prevHash, string rootHash, int diff, int version, unsigned int cycles, bool& cont) {
+    for (int i = 0; i < cycles; i++) {
         nonce++;
         timestamp = time(0);
         hash = myHash(prevHash + rootHash + to_string(version) + to_string(diff) + to_string(nonce) + to_string(timestamp));
+        if (isHashGood(hash, diff)) {
+            return true;
+        }
         if (GetAsyncKeyState(VK_ESCAPE) & 0x8000) {
             cout << endl << "Mining stopped" << endl << endl;
-            return false;
+            cont = false;
         }
     }
-    return true;
+    return false;
+}
+
+void getNonceTimestamp(unsigned int& nonce, unsigned int& timestamp, string& hash, string prevHash, string rootHash, int diff, int version) {
+    while(!isHashGood(hash, diff)) {
+        nonce++;
+        timestamp = time(0);
+        hash = myHash(prevHash + rootHash + to_string(version) + to_string(diff) + to_string(nonce) + to_string(timestamp));
+    }
 }
 
 void processBlock(Block block, vector<User>& users) {
@@ -215,26 +226,44 @@ void processBlock(Block block, vector<User>& users) {
 
 void mining(vector<Block>& blocks, vector<Transaction>& transactions, vector<User>& users, string prevHash, int version, int diff) {
     default_random_engine rng{ (unsigned int)time(0) };
-    unsigned int nonce = 0;
+    uniform_int_distribution<> dist{ 0, (numeric_limits<int>::max)() };
+    vector<unsigned int> nonces;
+    for (int i = 0; i < 5; i++) {
+        nonces.push_back(dist(rng));
+    }
     while (transactions.size() > 0) {
         bool halt = false;
-        vector<Transaction> blockTransactions;
+        vector<vector<Transaction>> blockTransactions;
+        vector<Block> currentBlocks;
+        vector<string> hashes;
         int size = 128;
         if (transactions.size() < 100) { size = transactions.size(); }
-        sample(transactions.begin(), transactions.end(), back_inserter(blockTransactions), size, mt19937(rng));
-        Block block(prevHash, version, diff, blockTransactions);
-        string rootHash = block.getRootHash();
-        string hash = "1111111111111111111111111111111111111111111111111111111111111111";
+        for (int i = 0; i < 5; i++) {
+            vector<Transaction> vec;
+            sample(transactions.begin(), transactions.end(), back_inserter(vec), size, mt19937(rng));
+            blockTransactions.push_back(vec);
+            Block block(prevHash, version, diff, blockTransactions[i]);
+            currentBlocks.push_back(block);
+            hashes.push_back("1111111111111111111111111111111111111111111111111111111111111111");
+        }
         unsigned int timestamp = 0;
-        bool cont = getNonceTimestamp(nonce, timestamp, hash, prevHash, rootHash, diff, version);
+        bool cont = true, gotHash = false;
+        int miner = -1;
+        while (!gotHash) {
+            miner++;
+            if (miner == 5) { miner = 0; }
+            gotHash = getNonceTimestamp(nonces[miner], timestamp, hashes[miner], prevHash, currentBlocks[miner].getRootHash(), diff, version, 100000, cont);
+            if (!cont) { return; }
+        }
         if (cont == false) { return; }
-        block.setNonce(nonce);
-        block.setTimestamp(timestamp);
-        prevHash = hash;
-        block.print(false);
-        processBlock(block, users);
-        blocks.push_back(block);
-        deleteFrom(transactions, blockTransactions);
+        currentBlocks[miner].setNonce(nonces[miner]);
+        currentBlocks[miner].setTimestamp(timestamp);
+        prevHash = hashes[miner];
+        cout << "Miner " << miner << " mined:" << endl;
+        currentBlocks[miner].print(false);
+        processBlock(currentBlocks[miner], users);
+        blocks.push_back(currentBlocks[miner]);
+        deleteFrom(transactions, blockTransactions[miner]);
     }
 }
 
@@ -332,7 +361,7 @@ int main() {
     vector<Transaction> transactions;
     vector<Block> blocks;
     string prevHash = "0000000000000000000000000000000000000000000000000000000000000000";
-    unsigned int diff = 1, version = 1;
+    unsigned int diff = 4, version = 1;
     generateUsers(users);
     generateTransactions(transactions, users);
     validateTransactions(transactions, users);
@@ -340,6 +369,7 @@ int main() {
     // Creating genesis block
     blocks.push_back(Block(prevHash, version, diff, vector<Transaction>()));
     unsigned int nonce = 0, timestamp = 0;
+    prevHash = "1111111111111111111111111111111111111111111111111111111111111111";
     getNonceTimestamp(nonce, timestamp, prevHash, blocks[0].getPrevHash(), blocks[0].getRootHash(), diff, version);
     blocks[0].setNonce(nonce);
     blocks[0].setTimestamp(timestamp);
