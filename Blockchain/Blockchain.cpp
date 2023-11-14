@@ -1,11 +1,9 @@
 #include <iostream>
 #include <string>
-#include <Vector>
 #include <random>
 #include <Windows.h>
 #include "hashFunc.h"
 
-using std::string;
 using std::back_inserter;
 using std::sample;
 
@@ -20,6 +18,9 @@ class User {
         int getBalance() { return _balance; }
 
         void setBalance(int balance) { _balance = balance; }
+        void setName(string name) { _name = name; }
+
+        void addBalance(int balance) { _balance += balance; }
 
         void print() {
             cout << "name: " << _name << endl;
@@ -58,7 +59,7 @@ class Transaction {
         string getSender() { return _sender; }
         string getRecipient() { return _recipient; }
         int getAmount() { return _amount; }
-        //int getTimestamp() { return _timestamp; }
+        int getTimestamp() { return _timestamp; }
 
         void print() {
             cout << "id: " << _id << endl;
@@ -89,21 +90,13 @@ class Block {
     public:
         Block() : _prevHash(""), _version(0), _diffTarget(0), _timestamp(0), _nonce(0)
         {
-            string th;
-            for (Transaction t : _transactions) {
-                th += t.getId();
-            }
-            _rootHash = myHash(th);
+            _rootHash = getMerkle(transactionsToHashVec())[0];
         }
 
         Block(string prevHash, unsigned int version, unsigned int diffTarget, vector<Transaction> transactions, unsigned int timestamp = 0, unsigned int nonce = 0) :
             _prevHash(prevHash), _version(version), _diffTarget(diffTarget), _transactions(transactions), _timestamp(timestamp), _nonce(nonce)
         {
-            string th = "";
-            for (Transaction t : _transactions) {
-                th += t.getId();
-            }
-            _rootHash = myHash(th);
+            _rootHash = getMerkle(transactionsToHashVec())[0];
         }
 
         void setTimestamp(unsigned int i) { _timestamp = i; }
@@ -137,6 +130,36 @@ class Block {
         string _prevHash, _rootHash;
         unsigned int _timestamp, _version, _nonce, _diffTarget;
         vector<Transaction> _transactions;
+
+        vector<string> transactionsToHashVec() {
+            vector<string> vec;
+            for (Transaction t : _transactions) {
+                vec.push_back(myHash(t.getId()));
+            }
+            return vec;
+        }
+
+        vector<string> getMerkle(vector<string> vec) {
+            unsigned int size = vec.size();
+            vector<string> newVec;
+            if (size == 0) {
+                newVec.push_back(myHash(""));
+                return newVec;
+            }
+            else if (size == 1) {
+                newVec.push_back(vec[0]);
+                return newVec;
+            }
+
+            if (size % 2 != 0) {
+                vec.push_back(vec[size - 1]);
+                size++;
+            }
+            for (int i = 0; i < size; i += 2) {
+                newVec.push_back(myHash(vec[i] + vec[i + 1]));
+            }
+            return getMerkle(newVec);
+        }
 };
 
 void generateUsers(vector<User>& users) {
@@ -185,8 +208,8 @@ void processBlock(Block block, vector<User>& users) {
         int senderI = distance(users.begin(), find_if(users.begin(), users.end(), [&](User obj) {return obj.getPublicKey() == t.getSender(); }));
         int recipientI = distance(users.begin(), find_if(users.begin(), users.end(), [&](User obj) {return obj.getPublicKey() == t.getRecipient(); }));
 
-        users[senderI].setBalance(users[senderI].getBalance() - t.getAmount());
-        users[recipientI].setBalance(users[recipientI].getBalance() + t.getAmount());
+        users[senderI].addBalance(-t.getAmount());
+        users[recipientI].addBalance(t.getAmount());
     }
 }
 
@@ -196,8 +219,9 @@ void mining(vector<Block>& blocks, vector<Transaction>& transactions, vector<Use
     while (transactions.size() > 0) {
         bool halt = false;
         vector<Transaction> blockTransactions;
-        size_t test = 100;
-        sample(transactions.begin(), transactions.end(), back_inserter(blockTransactions), test, mt19937(rng));
+        int size = 128;
+        if (transactions.size() < 100) { size = transactions.size(); }
+        sample(transactions.begin(), transactions.end(), back_inserter(blockTransactions), size, mt19937(rng));
         Block block(prevHash, version, diff, blockTransactions);
         string rootHash = block.getRootHash();
         string hash = "1111111111111111111111111111111111111111111111111111111111111111";
@@ -260,24 +284,7 @@ void getUser(vector<User> users) {
     }
 }
 
-
-int main() {
-    vector<User> users;
-    vector<Transaction> transactions;
-    vector<Block> blocks;
-    string prevHash = "1111111111111111111111111111111111111111111111111111111111111111";
-    unsigned int diff = 4, version = 1;
-    generateUsers(users);
-    generateTransactions(transactions, users);
-    blocks.push_back(Block("0000000000000000000000000000000000000000000000000000000000000000", version, diff, vector<Transaction>()));
-    unsigned int nonce = 0, timestamp = 0;
-    getNonceTimestamp(nonce, timestamp, prevHash, blocks[0].getPrevHash(), blocks[0].getRootHash(), diff, version);
-    blocks[0].setNonce(nonce);
-    blocks[0].setTimestamp(timestamp);
-    cout << "------------------------Genesis block------------------------" << endl;
-    blocks[0].print(false);
-    cout << endl << "----------Begining mining. Press Escape key to stop----------" << endl << endl;
-    mining(blocks, transactions, users, prevHash, version, diff);
+void explorer(vector<Block> blocks, vector<User> users) {
     int temp = 0;
     while (temp != 4) {
         cout << endl << "1 - find block\n2 - find transaction\n3 - find user\n4 - exit" << endl;
@@ -291,17 +298,58 @@ int main() {
             }
         }
         switch (temp) {
-            case 1:
-                getBlock(blocks);
-                break;
-            case 2:
-                getTransaction(blocks);
-                break;
-            case 3:
-                getUser(users);
-                break;
+        case 1:
+            getBlock(blocks);
+            break;
+        case 2:
+            getTransaction(blocks);
+            break;
+        case 3:
+            getUser(users);
+            break;
         }
         if (temp != 4) { temp = 0; }
     }
+}
+
+void validateTransactions(vector<Transaction>& transactions, vector<User> users) {
+    vector<Transaction> validated;
+    for (Transaction t : transactions) {
+        if (t.getId() != myHash(t.getSender() + t.getRecipient() + to_string(t.getAmount()) + to_string(t.getTimestamp()))) { continue; }
+        auto it = find_if(users.begin(), users.end(), [&](User u) {return u.getPublicKey() == t.getSender() && u.getBalance() >= t.getAmount(); });        
+        if (it != users.end()) {
+            users[distance(users.begin(), it)].addBalance(-t.getAmount());
+            validated.push_back(t);
+        }
+    }
+    transactions = validated;
+}
+
+
+int main() {
+    // Initialising values and generating users and transactions, transaction validation
+    vector<User> users;
+    vector<Transaction> transactions;
+    vector<Block> blocks;
+    string prevHash = "0000000000000000000000000000000000000000000000000000000000000000";
+    unsigned int diff = 1, version = 1;
+    generateUsers(users);
+    generateTransactions(transactions, users);
+    validateTransactions(transactions, users);
+
+    // Creating genesis block
+    blocks.push_back(Block(prevHash, version, diff, vector<Transaction>()));
+    unsigned int nonce = 0, timestamp = 0;
+    getNonceTimestamp(nonce, timestamp, prevHash, blocks[0].getPrevHash(), blocks[0].getRootHash(), diff, version);
+    blocks[0].setNonce(nonce);
+    blocks[0].setTimestamp(timestamp);
+    cout << "------------------------Genesis block------------------------" << endl;
+    blocks[0].print(false);
+    
+
+    // Mining and explorer
+    cout << endl << "----------Begining mining. Press Escape key to stop----------" << endl << endl;
+    mining(blocks, transactions, users, prevHash, version, diff);
+    explorer(blocks, users);
     return 0;
 }
