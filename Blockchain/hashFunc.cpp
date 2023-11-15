@@ -1,5 +1,3 @@
-#include <sstream>
-#include <random>
 #include "hashFunc.h"
 
 using namespace std;
