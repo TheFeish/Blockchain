@@ -1,6 +1,4 @@
 #pragma once
-#include <random>
-#include <string>
 #include <Windows.h>
 #include <omp.h>
 #include "hashFunc.h"

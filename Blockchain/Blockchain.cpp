@@ -1,7 +1,3 @@
-#include <iostream>
-#include <string>
-#include <random>
-#include <Windows.h>
 #include "blockchainFunc.h"
 
 #define THREAD_COUNT 5
